@@ -230,6 +230,7 @@
     <button class="tab active" onclick="switchTab('fixtures')">📅 Fixtures</button>
     <button class="tab" onclick="switchTab('standings')">📊 Our Record</button>
     <button class="tab" onclick="switchTab('scorers')">⚽ Top Scorers</button>
+    <button class="tab" onclick="switchTab('squad')">🎽 Squad</button>
   </div>
 
   <div id="tab-fixtures" class="tab-content active">
@@ -242,6 +243,10 @@
 
   <div id="tab-scorers" class="tab-content">
     <div id="scorersContent"><div class="loading-overlay">Loading scorers…</div></div>
+  </div>
+
+  <div id="tab-squad" class="tab-content">
+    <div class="section"><h3>Squad</h3><div id="squadContent"><div class="loading-overlay">Loading squad…</div></div></div>
   </div>
 
   <div id="tab-admin" class="tab-content">
@@ -272,12 +277,13 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
-// Squad
-const PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis', 'Hayes'];
+// Fallback squad list, used until players are added via the Squad admin section
+let PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis', 'Hayes'];
 
 let fixtures = [];
 let results = {};
 let goalScorers = {};
+let squad = [];
 
 async function sbFetch(path, options = {}) {
   // Reads work for everyone; writes only succeed if the request carries a
@@ -302,9 +308,11 @@ async function sbFetch(path, options = {}) {
 async function loadAndRender() {
   await loadFixtures();
   await loadResults();
+  await loadSquad();
   renderFixtures();
   renderStandings();
   renderScorers();
+  renderSquad();
   populateMatchSelect();
 }
 
@@ -325,7 +333,7 @@ async function checkAdminSession() {
   if (data.session) {
     lock.style.display = 'none';
     content.style.display = 'block';
-    renderAdminContent(data.session.user.email);
+    await renderAdminContent(data.session.user.email);
   } else {
     lock.style.display = 'block';
     content.style.display = 'none';
@@ -357,12 +365,30 @@ supabaseClient.auth.onAuthStateChange(() => {
   }
 });
 
-function renderAdminContent(email) {
+async function renderAdminContent(email) {
   const container = document.getElementById('adminContent');
   container.innerHTML = `
     <div class="section" style="text-align:center;">
       <p style="color:var(--grey-600);margin-bottom:12px;">Signed in as ${email}</p>
       <button class="btn" onclick="signOutAdmin()">Sign Out</button>
+    </div>
+
+    <div class="section">
+      <h3>Squad</h3>
+      <div id="squadAdminList"><div class="loading-overlay">Loading squad…</div></div>
+      <div class="form-group" style="margin-top:16px;">
+        <label>Name</label>
+        <input type="text" id="squadName" placeholder="e.g., Alfie">
+      </div>
+      <div class="form-group">
+        <label>Shirt Number</label>
+        <input type="number" id="squadNumber" min="1" placeholder="e.g., 7">
+      </div>
+      <div class="form-group">
+        <label>Date of Birth</label>
+        <input type="date" id="squadDob">
+      </div>
+      <button class="btn" onclick="addSquadPlayer()">Add Player</button>
     </div>
 
     <div class="section">
@@ -385,6 +411,10 @@ function renderAdminContent(email) {
           <option value="Home">Home</option>
           <option value="Away">Away</option>
         </select>
+      </div>
+      <div class="form-group">
+        <label>Location (optional)</label>
+        <input type="text" id="fixtureLocation" placeholder="e.g., Cams Alders, Fareham">
       </div>
       <button class="btn" onclick="addFixture()">Add Fixture</button>
     </div>
@@ -421,6 +451,8 @@ function renderAdminContent(email) {
     </div>
   `;
   populateMatchSelect();
+  await loadSquadAdmin();
+  renderSquadAdminList();
 }
 
 // ── Data loading ────────────────────────────────────────────────────────
@@ -444,10 +476,17 @@ async function loadResults() {
   });
 }
 
+async function loadSquad() {
+  squad = await sbFetch('knights_squad?select=*&order=shirt_number');
+  if (squad.length > 0) {
+    PLAYERS = squad.map(p => p.name);
+  }
+}
+
 // ── Tabs ────────────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', ['fixtures','standings','scorers'][i] === name);
+    t.classList.toggle('active', ['fixtures','standings','scorers','squad'][i] === name);
   });
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
@@ -461,6 +500,10 @@ function formatDate(dateStr) {
   const month = months[date.getMonth()];
   const year = date.getFullYear();
   return day + ' ' + month + ' ' + year;
+}
+
+function mapLink(location) {
+  return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(location);
 }
 
 // ── Fixtures tab ────────────────────────────────────────────────────────
@@ -497,10 +540,15 @@ function renderFixtures() {
 
     const timeStr = kickoff.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit' });
 
+    const locationLine = nextMatch.location
+      ? '<div class="next-match-detail"><a href="' + mapLink(nextMatch.location) + '" target="_blank" rel="noopener" style="color:var(--gold);">📍 ' + nextMatch.location + '</a></div>'
+      : '';
+
     html += '<div class="next-match-card">' +
       '<div class="next-match-label">NEXT MATCH</div>' +
       '<div class="next-match-teams">Knights vs ' + nextMatch.opponent + '</div>' +
       '<div class="next-match-detail">' + formatDate(nextMatch.date) + ' · ' + timeStr + ' · ' + nextMatch.home_away + '</div>' +
+      locationLine +
       '<div class="next-match-countdown">' + countdownText + '</div>' +
       '</div>';
   } else {
@@ -552,10 +600,17 @@ function renderFixtures() {
       potmLine = '<div class="match-potm" style="grid-column: 1 / -1;">🌟 Player of the Match: ' + res.potm + '</div>';
     }
 
+    // Location line, with a Google Maps link, when set
+    let locationLine = '';
+    if (f.location) {
+      locationLine = '<div class="match-scorers" style="grid-column: 1 / -1;"><a href="' + mapLink(f.location) + '" target="_blank" rel="noopener" style="color:inherit;">📍 ' + f.location + '</a></div>';
+    }
+
     html += '<div class="match-card">' +
       '<div class="match-team home">Knights<div class="match-meta">' + formatDate(f.date) + '</div></div>' +
       scoreHtml +
       '<div class="match-team away">' + f.opponent + '<div class="match-meta">' + (result ? result : f.home_away) + '</div></div>' +
+      locationLine +
       scorersLine +
       potmLine +
       '</div>';
@@ -648,6 +703,26 @@ function renderScorers() {
   container.innerHTML = html;
 }
 
+// ── Squad tab ───────────────────────────────────────────────────────────
+function renderSquad() {
+  const container = document.getElementById('squadContent');
+
+  if (squad.length === 0) {
+    container.innerHTML = '<div class="empty-state">Squad list coming soon</div>';
+    return;
+  }
+
+  let html = '';
+  squad.forEach(p => {
+    html += '<div class="leaderboard-item">' +
+      '<div class="leaderboard-rank">' + (p.shirt_number != null ? p.shirt_number : '-') + '</div>' +
+      '<div class="leaderboard-name">' + p.name + '</div>' +
+      '</div>';
+  });
+
+  container.innerHTML = html;
+}
+
 // ── Admin: fixtures and results ────────────────────────────────────────
 function populateMatchSelect() {
   const select = document.getElementById('matchSelect');
@@ -657,6 +732,87 @@ function populateMatchSelect() {
     const label = f.opponent + ' (' + f.date + ')';
     select.innerHTML += '<option value="' + f.id + '">' + label + '</option>';
   });
+}
+
+// ── Admin: squad ────────────────────────────────────────────────────────
+// Date of birth lives in knights_squad_details, a separate table that only
+// signed-in users can read (see the SQL). The public knights_squad table
+// never includes it, so it's available here for tournament forms without
+// ever being exposed on the public Squad tab.
+let squadAdmin = [];
+
+async function loadSquadAdmin() {
+  squadAdmin = await sbFetch('knights_squad?select=*,knights_squad_details(date_of_birth)&order=shirt_number');
+}
+
+function renderSquadAdminList() {
+  const container = document.getElementById('squadAdminList');
+  if (!container) return;
+
+  if (squadAdmin.length === 0) {
+    container.innerHTML = '<div class="empty-state">No players added yet</div>';
+    return;
+  }
+
+  let html = '<table class="table"><tr><th>#</th><th>Name</th><th>Date of Birth</th><th></th></tr>';
+  squadAdmin.forEach(p => {
+    const details = p.knights_squad_details;
+    const dob = details && details.date_of_birth ? formatDate(details.date_of_birth) : '-';
+    html += '<tr><td>' + (p.shirt_number != null ? p.shirt_number : '-') + '</td>' +
+      '<td>' + p.name + '</td>' +
+      '<td>' + dob + '</td>' +
+      '<td><button class="btn" style="padding:4px 8px;font-size:11px;" onclick="deleteSquadPlayer(' + p.id + ')">Remove</button></td></tr>';
+  });
+  html += '</table>';
+  container.innerHTML = html;
+}
+
+async function addSquadPlayer() {
+  const name = document.getElementById('squadName').value.trim();
+  const numberVal = document.getElementById('squadNumber').value;
+  const shirtNumber = numberVal ? parseInt(numberVal) : null;
+  const dob = document.getElementById('squadDob').value || null;
+
+  if (!name) { showToast('Enter a name', true); return; }
+
+  try {
+    const created = await sbFetch('knights_squad', {
+      method: 'POST',
+      body: JSON.stringify([{ name, shirt_number: shirtNumber }])
+    });
+
+    if (dob) {
+      await sbFetch('knights_squad_details', {
+        method: 'POST',
+        body: JSON.stringify([{ player_id: created[0].id, date_of_birth: dob }])
+      });
+    }
+
+    document.getElementById('squadName').value = '';
+    document.getElementById('squadNumber').value = '';
+    document.getElementById('squadDob').value = '';
+
+    await loadSquadAdmin();
+    renderSquadAdminList();
+    await loadSquad();
+    renderSquad();
+    showToast('Player added!');
+  } catch(e) {
+    showToast('Error: ' + e.message, true);
+  }
+}
+
+async function deleteSquadPlayer(id) {
+  try {
+    await sbFetch('knights_squad?id=eq.' + id, { method: 'DELETE' });
+    await loadSquadAdmin();
+    renderSquadAdminList();
+    await loadSquad();
+    renderSquad();
+    showToast('Player removed');
+  } catch(e) {
+    showToast('Error: ' + e.message, true);
+  }
 }
 
 function loadMatchForResult() {
@@ -698,6 +854,7 @@ async function addFixture() {
   const date = document.getElementById('fixtureDate').value;
   const time = document.getElementById('fixtureTime').value;
   const homeAway = document.getElementById('fixtureHomeAway').value;
+  const location = document.getElementById('fixtureLocation').value.trim() || null;
 
   if (!opponent || !date || !time) { showToast('Fill in all fields', true); return; }
 
@@ -706,12 +863,13 @@ async function addFixture() {
   try {
     await sbFetch('knights_fixtures', {
       method: 'POST',
-      body: JSON.stringify([{ opponent, date, kickoff_time: kickoff, home_away: homeAway }])
+      body: JSON.stringify([{ opponent, date, kickoff_time: kickoff, home_away: homeAway, location }])
     });
 
     document.getElementById('fixtureOpponent').value = '';
     document.getElementById('fixtureDate').value = '';
     document.getElementById('fixtureTime').value = '';
+    document.getElementById('fixtureLocation').value = '';
 
     await loadFixtures();
     renderFixtures();
