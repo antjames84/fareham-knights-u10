@@ -221,6 +221,7 @@
     <div>
       <h1>Fareham Knights U10</h1>
       <div class="header-meta">Coaches: Sam Lloyd &amp; Louis Hider</div>
+      <div class="header-meta">Sponsor: <a href="https://ksjlettings.co.uk/" target="_blank" rel="noopener" style="color:var(--gold);">KSJ Lettings</a></div>
     </div>
   </div>
   <button onclick="switchTab('admin')" title="Manage" style="position:relative;z-index:1;background:rgba(255,255,255,0.1);border:1px solid rgba(255,255,255,0.2);color:rgba(255,255,255,0.6);width:38px;height:38px;border-radius:8px;font-size:16px;cursor:pointer;flex-shrink:0;">⚙</button>
@@ -228,7 +229,7 @@
 <div class="main">
   <div class="tabs">
     <button class="tab active" onclick="switchTab('fixtures')">📅 Fixtures</button>
-    <button class="tab" onclick="switchTab('standings')">📊 Our Record</button>
+    <button class="tab" onclick="switchTab('results')">📊 Results</button>
     <button class="tab" onclick="switchTab('scorers')">⚽ Top Scorers</button>
     <button class="tab" onclick="switchTab('squad')">🎽 Squad</button>
   </div>
@@ -237,8 +238,8 @@
     <div id="fixturesContent"><div class="loading-overlay">Loading fixtures…</div></div>
   </div>
 
-  <div id="tab-standings" class="tab-content">
-    <div id="standingsContent"><div class="loading-overlay">Loading standings…</div></div>
+  <div id="tab-results" class="tab-content">
+    <div id="resultsContent"><div class="loading-overlay">Loading results…</div></div>
   </div>
 
   <div id="tab-scorers" class="tab-content">
@@ -310,7 +311,7 @@ async function loadAndRender() {
   await loadResults();
   await loadSquad();
   renderFixtures();
-  renderStandings();
+  renderResults();
   renderScorers();
   renderSquad();
   populateMatchSelect();
@@ -486,7 +487,7 @@ async function loadSquad() {
 // ── Tabs ────────────────────────────────────────────────────────────────
 function switchTab(name) {
   document.querySelectorAll('.tab').forEach((t, i) => {
-    t.classList.toggle('active', ['fixtures','standings','scorers','squad'][i] === name);
+    t.classList.toggle('active', ['fixtures','results','scorers','squad'][i] === name);
   });
   document.querySelectorAll('.tab-content').forEach(c => c.classList.remove('active'));
   document.getElementById('tab-' + name).classList.add('active');
@@ -506,6 +507,63 @@ function mapLink(location) {
   return 'https://www.google.com/maps/search/?api=1&query=' + encodeURIComponent(location);
 }
 
+// Builds the card for one fixture, whether it's awaiting a result (shows
+// kickoff countdown / "vs") or already played (shows score, scorers, POTM).
+function buildMatchCard(f) {
+  const now = new Date();
+  const res = results[f.id];
+  const kickoff = new Date(f.kickoff_time);
+  const isPlayed = res !== undefined;
+  const isFuture = kickoff > now;
+
+  let result = '';
+  if (isPlayed) {
+    if (res.knights > res.opponent) result = 'W';
+    else if (res.knights === res.opponent) result = 'D';
+    else result = 'L';
+  }
+
+  let scoreHtml = '';
+  if (isPlayed) {
+    scoreHtml = '<div class="score-display result">' + res.knights + ' - ' + res.opponent + '</div>';
+  } else if (isFuture) {
+    const diff = kickoff - now;
+    const days = Math.floor(diff / (1000 * 60 * 60 * 24));
+    const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+    scoreHtml = '<div class="fixture-status">In ' + (days > 0 ? days + 'd ' : '') + hours + 'h</div>';
+  } else {
+    scoreHtml = '<div class="fixture-status">vs</div>';
+  }
+
+  // Goal scorers line for played matches
+  let scorersLine = '';
+  if (isPlayed && goalScorers[f.id] && goalScorers[f.id].length > 0) {
+    const scorersText = goalScorers[f.id].map(s => s.player + ' ' + s.goals).join(', ');
+    scorersLine = '<div class="match-scorers" style="grid-column: 1 / -1;">⚽ ' + scorersText + '</div>';
+  }
+
+  // Player of the Match line for played matches
+  let potmLine = '';
+  if (isPlayed && res.potm) {
+    potmLine = '<div class="match-potm" style="grid-column: 1 / -1;">🌟 Player of the Match: ' + res.potm + '</div>';
+  }
+
+  // Location line, with a Google Maps link, when set
+  let locationLine = '';
+  if (f.location) {
+    locationLine = '<div class="match-scorers" style="grid-column: 1 / -1;"><a href="' + mapLink(f.location) + '" target="_blank" rel="noopener" style="color:inherit;">📍 ' + f.location + '</a></div>';
+  }
+
+  return '<div class="match-card">' +
+    '<div class="match-team home">Knights<div class="match-meta">' + formatDate(f.date) + '</div></div>' +
+    scoreHtml +
+    '<div class="match-team away">' + f.opponent + '<div class="match-meta">' + (result ? result : f.home_away) + '</div></div>' +
+    locationLine +
+    scorersLine +
+    potmLine +
+    '</div>';
+}
+
 // ── Fixtures tab ────────────────────────────────────────────────────────
 function renderFixtures() {
   const container = document.getElementById('fixturesContent');
@@ -522,6 +580,10 @@ function renderFixtures() {
       nextMatch = f;
     }
   });
+
+  // Anything without a result yet stays here; once a result is entered it
+  // moves to the Results tab.
+  const upcoming = fixtures.filter(f => results[f.id] === undefined);
 
   let html = '';
 
@@ -551,77 +613,21 @@ function renderFixtures() {
       locationLine +
       '<div class="next-match-countdown">' + countdownText + '</div>' +
       '</div>';
-  } else {
-    const anyUnplayed = fixtures.some(f => results[f.id] === undefined);
-    if (!anyUnplayed) {
-      html += '<div class="next-match-card">' +
-        '<div class="next-match-label">SEASON COMPLETE</div>' +
-        '<div class="next-match-teams">All fixtures played</div>' +
-        '</div>';
-    }
+  } else if (upcoming.length === 0) {
+    html += '<div class="next-match-card">' +
+      '<div class="next-match-label">SEASON COMPLETE</div>' +
+      '<div class="next-match-teams">All fixtures played</div>' +
+      '</div>';
   }
 
-  // All fixtures list
-  fixtures.forEach(f => {
-    const res = results[f.id];
-    const kickoff = new Date(f.kickoff_time);
-    const isPlayed = res !== undefined;
-    const isFuture = kickoff > now;
-
-    let result = '';
-    if (isPlayed) {
-      if (res.knights > res.opponent) result = 'W';
-      else if (res.knights === res.opponent) result = 'D';
-      else result = 'L';
-    }
-
-    let scoreHtml = '';
-    if (isPlayed) {
-      scoreHtml = '<div class="score-display result">' + res.knights + ' - ' + res.opponent + '</div>';
-    } else if (isFuture) {
-      const diff = kickoff - now;
-      const days = Math.floor(diff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor((diff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
-      scoreHtml = '<div class="fixture-status">In ' + (days > 0 ? days + 'd ' : '') + hours + 'h</div>';
-    } else {
-      scoreHtml = '<div class="fixture-status">vs</div>';
-    }
-
-    // Goal scorers line for played matches
-    let scorersLine = '';
-    if (isPlayed && goalScorers[f.id] && goalScorers[f.id].length > 0) {
-      const scorersText = goalScorers[f.id].map(s => s.player + ' ' + s.goals).join(', ');
-      scorersLine = '<div class="match-scorers" style="grid-column: 1 / -1;">⚽ ' + scorersText + '</div>';
-    }
-
-    // Player of the Match line for played matches
-    let potmLine = '';
-    if (isPlayed && res.potm) {
-      potmLine = '<div class="match-potm" style="grid-column: 1 / -1;">🌟 Player of the Match: ' + res.potm + '</div>';
-    }
-
-    // Location line, with a Google Maps link, when set
-    let locationLine = '';
-    if (f.location) {
-      locationLine = '<div class="match-scorers" style="grid-column: 1 / -1;"><a href="' + mapLink(f.location) + '" target="_blank" rel="noopener" style="color:inherit;">📍 ' + f.location + '</a></div>';
-    }
-
-    html += '<div class="match-card">' +
-      '<div class="match-team home">Knights<div class="match-meta">' + formatDate(f.date) + '</div></div>' +
-      scoreHtml +
-      '<div class="match-team away">' + f.opponent + '<div class="match-meta">' + (result ? result : f.home_away) + '</div></div>' +
-      locationLine +
-      scorersLine +
-      potmLine +
-      '</div>';
-  });
+  upcoming.forEach(f => { html += buildMatchCard(f); });
 
   container.innerHTML = html;
 }
 
-// ── Our Record tab ──────────────────────────────────────────────────────
-function renderStandings() {
-  const container = document.getElementById('standingsContent');
+// ── Results tab ─────────────────────────────────────────────────────────
+function renderResults() {
+  const container = document.getElementById('resultsContent');
 
   const standings = [];
   fixtures.forEach(f => {
@@ -660,13 +666,17 @@ function renderStandings() {
     else formHtml += '<span class="l">L</span> ';
   });
 
-  let html = '<div class="section"><h3>Our Record</h3>' +
+  let html = '<div class="section"><h3>Results</h3>' +
     '<table class="table">' +
     '<tr><th>Played</th><th>Wins</th><th>Draws</th><th>Losses</th><th>GF</th><th>GA</th><th>GD</th><th>Pts</th></tr>' +
     '<tr><td>' + s.played + '</td><td>' + s.wins + '</td><td>' + s.draws + '</td><td>' + s.losses + '</td><td>' + s.goalsFor + '</td><td>' + s.goalsAgainst + '</td><td>' + goalDiff + '</td><td style="font-weight:700;color:var(--crimson);font-size:16px;">' + points + '</td></tr>' +
     '</table>' +
     (formHtml ? '<div style="margin-top:20px;"><div style="font-size:12px;font-weight:600;color:var(--grey-600);margin-bottom:6px;">FORM (LAST ' + lastFive.length + ')</div><div class="form-string">' + formHtml.trim() + '</div></div>' : '') +
     '</div>';
+
+  // Match-by-match results, most recent first
+  const recentFirst = [...playedFixtures].reverse();
+  recentFirst.forEach(f => { html += buildMatchCard(f); });
 
   container.innerHTML = html;
 }
@@ -916,7 +926,7 @@ async function saveResult() {
 
     await loadResults();
     renderFixtures();
-    renderStandings();
+    renderResults();
     renderScorers();
     document.getElementById('resultForm').style.display = 'none';
     document.getElementById('matchSelect').value = '';
