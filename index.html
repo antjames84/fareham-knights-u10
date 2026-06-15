@@ -140,6 +140,13 @@
     text-align: center;
     margin-top: 4px;
   }
+  .match-potm {
+    font-size: 12px;
+    font-weight: 700;
+    color: var(--gold-dark);
+    text-align: center;
+    margin-top: 4px;
+  }
   .refresh-btn {
     position: fixed;
     bottom: 20px;
@@ -264,7 +271,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Squad
-const PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis', 'Hayes'];
+const PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis'];
 
 let fixtures = [];
 let results = {};
@@ -392,6 +399,13 @@ function renderAdminContent(email) {
           <label>Opponent Goals</label>
           <input type="number" id="opponentGoals" min="0" placeholder="0">
         </div>
+        <div class="form-group">
+          <label>Player of the Match</label>
+          <select id="potmSelect">
+            <option value="">-- None --</option>
+            ${PLAYERS.map(p => '<option>' + p + '</option>').join('')}
+          </select>
+        </div>
         <h3 style="margin-top:20px;margin-bottom:12px;">Goal Scorers</h3>
         <div id="goalScorersList"></div>
         <button class="btn" style="margin-top:12px;" onclick="addGoalScorerInput()">+ Add Goal Scorer</button>
@@ -412,7 +426,7 @@ async function loadResults() {
   const data = await sbFetch('knights_match_results?select=*');
   results = {};
   data.forEach(r => {
-    results[r.fixture_id] = { knights: r.knights_goals, opponent: r.opponent_goals };
+    results[r.fixture_id] = { knights: r.knights_goals, opponent: r.opponent_goals, potm: r.player_of_match };
   });
 
   const goalData = await sbFetch('knights_goal_scorers?select=*');
@@ -525,11 +539,18 @@ function renderFixtures() {
       scorersLine = '<div class="match-scorers" style="grid-column: 1 / -1;">⚽ ' + scorersText + '</div>';
     }
 
+    // Player of the Match line for played matches
+    let potmLine = '';
+    if (isPlayed && res.potm) {
+      potmLine = '<div class="match-potm" style="grid-column: 1 / -1;">🌟 Player of the Match: ' + res.potm + '</div>';
+    }
+
     html += '<div class="match-card">' +
       '<div class="match-team home">Knights<div class="match-meta">' + formatDate(f.date) + '</div></div>' +
       scoreHtml +
       '<div class="match-team away">' + f.opponent + '<div class="match-meta">' + (result ? result : f.home_away) + '</div></div>' +
       scorersLine +
+      potmLine +
       '</div>';
   });
 
@@ -641,6 +662,7 @@ function loadMatchForResult() {
   const res = results[matchId] || {};
   document.getElementById('knightsGoals').value = res.knights || '';
   document.getElementById('opponentGoals').value = res.opponent || '';
+  document.getElementById('potmSelect').value = res.potm || '';
 
   const scorers = goalScorers[matchId] || [];
   const list = document.getElementById('goalScorersList');
@@ -697,6 +719,7 @@ async function saveResult() {
   const matchId = parseInt(document.getElementById('matchSelect').value);
   const knightsGoals = parseInt(document.getElementById('knightsGoals').value) || 0;
   const opponentGoals = parseInt(document.getElementById('opponentGoals').value) || 0;
+  const potm = document.getElementById('potmSelect').value || null;
 
   const scorerInputs = document.querySelectorAll('#goalScorersList .goal-inputs');
   const scorers = [];
@@ -715,7 +738,7 @@ async function saveResult() {
     // Insert new result
     await sbFetch('knights_match_results', {
       method: 'POST',
-      body: JSON.stringify([{ fixture_id: matchId, knights_goals: knightsGoals, opponent_goals: opponentGoals }])
+      body: JSON.stringify([{ fixture_id: matchId, knights_goals: knightsGoals, opponent_goals: opponentGoals, player_of_match: potm }])
     });
 
     // Insert goal scorers
