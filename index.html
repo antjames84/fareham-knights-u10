@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="Fareham Knights">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
 <title>Fareham Knights U10 - Match Tracker</title>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=Bebas+Neue&family=Inter:wght@400;500;600&display=swap');
@@ -184,7 +187,6 @@
   @media (max-width: 600px) {
     .table { font-size: 12px; }
     .table th, .table td { padding: 8px 4px; }
-    .table th:nth-child(n+5), .table td:nth-child(n+5) { display: none; }
   }
   .leaderboard-item { background: var(--white); border-radius: 10px; padding: 16px; margin-bottom: 12px; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 1px 3px rgba(0,0,0,0.07); }
   .leaderboard-rank { font-family: 'Bebas Neue', sans-serif; font-size: 28px; color: var(--gold-dark); min-width: 40px; }
@@ -271,7 +273,7 @@ const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZ
 const supabaseClient = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 
 // Squad
-const PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis'];
+const PLAYERS = ['Billy', 'LJ', 'Cooper', 'George', 'Dylan', 'Arlo', 'Chase', 'Louis', 'Hayes'];
 
 let fixtures = [];
 let results = {};
@@ -297,13 +299,18 @@ async function sbFetch(path, options = {}) {
   return text ? JSON.parse(text) : [];
 }
 
+async function loadAndRender() {
+  await loadFixtures();
+  await loadResults();
+  renderFixtures();
+  renderStandings();
+  renderScorers();
+  populateMatchSelect();
+}
+
 async function init() {
   try {
-    await loadFixtures();
-    await loadResults();
-    renderFixtures();
-    renderStandings();
-    renderScorers();
+    await loadAndRender();
   } catch(e) {
     showToast('Failed to load data: ' + e.message, true);
   }
@@ -763,17 +770,27 @@ async function saveResult() {
 
 async function refreshData() {
   try {
-    await loadFixtures();
-    await loadResults();
-    renderFixtures();
-    renderStandings();
-    renderScorers();
-    populateMatchSelect();
+    await loadAndRender();
     showToast('Updated!');
   } catch(e) {
     showToast('Refresh failed: ' + e.message, true);
   }
 }
+
+// Re-fetch whenever the page becomes visible again. iOS often resumes a
+// home-screen web app from a suspended state rather than reloading it, so
+// without this, reopening the app could show stale scores or countdown
+// until iOS eventually forces a real reload.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    loadAndRender().catch(() => {});
+  }
+});
+window.addEventListener('pageshow', (event) => {
+  if (event.persisted) {
+    loadAndRender().catch(() => {});
+  }
+});
 
 let toastTimer;
 function showToast(msg, error = false) {
